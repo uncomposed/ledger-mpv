@@ -3,11 +3,11 @@
 This folder holds the Node/TypeScript + Prisma backend for the weekly meal-planning app.
 
 ## Setup
-1. Copy `.env.example` to `.env` and set `DATABASE_URL`.
-2. Install dependencies (add to `package.json` as you scaffold the API).
-3. Run `npx prisma migrate dev --name init` to create the schema locally.
-4. Generate the Prisma client: `npx prisma generate`.
-5. Start your HTTP server (Express/Nest/tRPC) and wire routes to services that use the Prisma client.
+1. Copy `.env.example` to `.env` and set `DATABASE_URL`. Default points to the Docker Compose Postgres service.
+2. `npm install`
+3. Ensure Postgres is running (`docker compose -f ../infra/docker-compose.yml up -d` from repo root).
+4. Create the schema: `npm run prisma:migrate` (first run will create the initial migration) then `npm run prisma:generate`.
+5. Start the API: `npm run dev` (or `npm run start` after `npm run build`).
 
 ## Services to implement
 - **Auth**: Clerk (code-first config) or equivalent JWT middleware; issue entity-scoped session context.
@@ -25,3 +25,19 @@ Use BullMQ or cron-triggered workers for:
 ## Observability
 - Add structured logging, OTEL traces, and Prisma query logging.
 - Expose health endpoints and job/queue metrics; avoid logging secrets such as the per-request AI key.
+
+## Available routes in this MVP stub
+- `GET /health` — service heartbeat.
+- `POST /actors` — create an actor `{ email, name? }`.
+- `POST /entities` — create an entity `{ name, adminActorId? }`; seeds base locations/sensors.
+- `POST /entities/:entityId/actors` — add membership `{ actorId, role }`.
+- `POST /entities/:entityId/resources` — add a resource.
+- `POST /entities/:entityId/inventory` — add/update inventory item.
+- `POST /entities/:entityId/goals/weekly-plan` — create or reuse a weekly plan goal + planning task.
+- `POST /entities/:entityId/tracks` — create a track + pending lens run (defaults to inventory lens).
+- `GET /entities/:entityId/tasks?actorId=&type=` — list tasks with optional filters.
+- `POST /tasks/:taskId/status` — update task status.
+- `POST /seed/demo` — seed a demo household, admin actor, inventory, and weekly planning task.
+- `GET /entities/:entityId/summary` — lightweight snapshot of tasks, inventory, and goals.
+
+Replace the header-based context (`x-actor-id`, `x-entity-id`) with Clerk-authenticated context when you wire auth.

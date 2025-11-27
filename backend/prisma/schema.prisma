@@ -19,6 +19,8 @@ model Entity {
 
   actors        EntityActor[]
   locations     Location[]
+  solutions     Solution[]
+  tasks         Task[]
   resources     Resource[]
   inventory     InventoryItem[]
   goals         Goal[]
@@ -68,11 +70,12 @@ model Location {
   updatedAt DateTime @updatedAt
   deletedAt DateTime?
 
-  entity  Entity   @relation(fields: [entityId], references: [id])
-  parent  Location @relation("LocationChildren", fields: [parentId], references: [id])
-  children Location[] @relation("LocationChildren")
+  entity    Entity    @relation(fields: [entityId], references: [id])
+  parent    Location? @relation("LocationChildren", fields: [parentId], references: [id])
+  children  Location[] @relation("LocationChildren")
   inventory InventoryItem[]
   tasks     Task[]
+  tracks    Track[]
 }
 
 model Resource {
@@ -103,6 +106,8 @@ model InventoryItem {
   entity   Entity   @relation(fields: [entityId], references: [id])
   resource Resource @relation(fields: [resourceId], references: [id])
   location Location @relation(fields: [locationId], references: [id])
+
+  @@unique([resourceId, entityId, locationId])
 }
 
 model Goal {
@@ -135,11 +140,10 @@ model Solution {
   updatedAt   DateTime @updatedAt
   deletedAt   DateTime?
 
-  entity Entity @relation(fields: [entityId], references: [id])
-  goal   Goal?  @relation(fields: [goalId], references: [id])
-  steps  Step[]
-  tasks  Task[]
-  plannings Planning[]
+  entity    Entity  @relation(fields: [entityId], references: [id])
+  goal      Goal?   @relation(fields: [goalId], references: [id])
+  steps     Step[]
+  tasks     Task[]
 }
 
 model Step {
@@ -151,9 +155,9 @@ model Step {
   updatedAt   DateTime @updatedAt
   deletedAt   DateTime?
 
-  solution Solution @relation(fields: [solutionId], references: [id])
+  solution  Solution      @relation(fields: [solutionId], references: [id])
   resources StepResource[]
-  task      Task?
+  task      Task?         @relation("StepTask")
 }
 
 model StepResource {
@@ -186,7 +190,7 @@ model Task {
   entity   Entity   @relation(fields: [entityId], references: [id])
   goal     Goal?    @relation(fields: [goalId], references: [id])
   solution Solution? @relation(fields: [solutionId], references: [id])
-  step     Step?    @relation(fields: [stepId], references: [id])
+  step     Step?    @relation("StepTask", fields: [stepId], references: [id])
   location Location? @relation(fields: [locationId], references: [id])
 
   taskActors TaskActor[]
@@ -194,6 +198,8 @@ model Task {
   answers    Answer[]
   changeSets ChangeSet[]
   plannings  Planning[]
+
+  @@unique([stepId])
 }
 
 model TaskActor {
@@ -338,6 +344,8 @@ model Planning {
   entity Entity @relation(fields: [entityId], references: [id])
   goal   Goal?  @relation(fields: [goalId], references: [id])
   task   Task   @relation(fields: [taskId], references: [id])
+
+  @@unique([taskId])
 }
 
 model AuditLog {
