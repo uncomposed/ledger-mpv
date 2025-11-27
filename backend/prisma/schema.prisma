@@ -1,0 +1,355 @@
+// Prisma schema for the weekly meal-planning MVP
+// Follows the domain: entities, actors, inventory, planning, tasks, lenses, and approvals.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Entity {
+  id        String        @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  deletedAt DateTime?
+
+  actors        EntityActor[]
+  locations     Location[]
+  resources     Resource[]
+  inventory     InventoryItem[]
+  goals         Goal[]
+  sensors       Sensor[]
+  tracks        Track[]
+  changeSets    ChangeSet[]
+  questions     Question[]
+  auditLogs     AuditLog[]
+  plannings     Planning[]
+}
+
+model Actor {
+  id        String        @id @default(uuid()) @db.Uuid
+  email     String        @unique
+  name      String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  deletedAt DateTime?
+
+  memberships EntityActor[]
+  taskActors  TaskActor[]
+  tracks      Track[]
+  auditLogs   AuditLog[]
+}
+
+model EntityActor {
+  id        String   @id @default(uuid()) @db.Uuid
+  entityId  String   @db.Uuid
+  actorId   String   @db.Uuid
+  role      String   // ADMIN | MEMBER
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  entity Entity @relation(fields: [entityId], references: [id])
+  actor  Actor  @relation(fields: [actorId], references: [id])
+
+  @@unique([entityId, actorId])
+}
+
+model Location {
+  id        String   @id @default(uuid()) @db.Uuid
+  entityId  String   @db.Uuid
+  name      String
+  parentId  String?  @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  entity  Entity   @relation(fields: [entityId], references: [id])
+  parent  Location @relation("LocationChildren", fields: [parentId], references: [id])
+  children Location[] @relation("LocationChildren")
+  inventory InventoryItem[]
+  tasks     Task[]
+}
+
+model Resource {
+  id        String   @id @default(uuid()) @db.Uuid
+  entityId  String   @db.Uuid
+  name      String
+  unit      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  entity        Entity         @relation(fields: [entityId], references: [id])
+  inventory     InventoryItem[]
+  stepResources StepResource[]
+}
+
+model InventoryItem {
+  id         String   @id @default(uuid()) @db.Uuid
+  entityId   String   @db.Uuid
+  resourceId String   @db.Uuid
+  locationId String   @db.Uuid
+  quantity   Float
+  expiresAt  DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  deletedAt  DateTime?
+
+  entity   Entity   @relation(fields: [entityId], references: [id])
+  resource Resource @relation(fields: [resourceId], references: [id])
+  location Location @relation(fields: [locationId], references: [id])
+}
+
+model Goal {
+  id           String   @id @default(uuid()) @db.Uuid
+  entityId     String   @db.Uuid
+  type         String   // WEEKLY_MEAL_PLAN
+  state        String   // PENDING | ACTIVE | COMPLETED
+  periodStart  DateTime?
+  periodEnd    DateTime?
+  recurring    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  entity    Entity      @relation(fields: [entityId], references: [id])
+  solutions Solution[]
+  tasks     Task[]
+  questions Question[]
+  plannings Planning[]
+}
+
+model Solution {
+  id          String   @id @default(uuid()) @db.Uuid
+  entityId    String   @db.Uuid
+  goalId      String?  @db.Uuid
+  name        String
+  description String?
+  tags        String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  entity Entity @relation(fields: [entityId], references: [id])
+  goal   Goal?  @relation(fields: [goalId], references: [id])
+  steps  Step[]
+  tasks  Task[]
+  plannings Planning[]
+}
+
+model Step {
+  id          String   @id @default(uuid()) @db.Uuid
+  solutionId  String   @db.Uuid
+  order       Int
+  instructions String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  solution Solution @relation(fields: [solutionId], references: [id])
+  resources StepResource[]
+  task      Task?
+}
+
+model StepResource {
+  id         String   @id @default(uuid()) @db.Uuid
+  stepId     String   @db.Uuid
+  resourceId String   @db.Uuid
+  quantity   Float?
+
+  step     Step     @relation(fields: [stepId], references: [id])
+  resource Resource @relation(fields: [resourceId], references: [id])
+
+  @@unique([stepId, resourceId])
+}
+
+model Task {
+  id          String    @id @default(uuid()) @db.Uuid
+  entityId    String    @db.Uuid
+  goalId      String?   @db.Uuid
+  solutionId  String?   @db.Uuid
+  stepId      String?   @db.Uuid
+  locationId  String?   @db.Uuid
+  type        String    // INVENTORY_REVIEW | BUY_RESOURCE | COOK_RECIPE_STEP | PLAN_WEEKLY_MEALS | APPLY_CHANGESET
+  status      String    // PENDING | IN_PROGRESS | DONE | BLOCKED
+  dueAt       DateTime?
+  startsAt    DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  entity   Entity   @relation(fields: [entityId], references: [id])
+  goal     Goal?    @relation(fields: [goalId], references: [id])
+  solution Solution? @relation(fields: [solutionId], references: [id])
+  step     Step?    @relation(fields: [stepId], references: [id])
+  location Location? @relation(fields: [locationId], references: [id])
+
+  taskActors TaskActor[]
+  questions  Question[]
+  answers    Answer[]
+  changeSets ChangeSet[]
+  plannings  Planning[]
+}
+
+model TaskActor {
+  id        String   @id @default(uuid()) @db.Uuid
+  taskId    String   @db.Uuid
+  actorId   String   @db.Uuid
+  role      String   // RESPONSIBLE | ACCOUNTABLE
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  task  Task  @relation(fields: [taskId], references: [id])
+  actor Actor @relation(fields: [actorId], references: [id])
+
+  @@unique([taskId, actorId, role])
+}
+
+model Sensor {
+  id        String   @id @default(uuid()) @db.Uuid
+  entityId  String   @db.Uuid
+  name      String
+  type      String   // MOBILE_CAMERA | WEB_UPLOAD
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  entity Entity @relation(fields: [entityId], references: [id])
+  tracks Track[]
+}
+
+model Track {
+  id         String   @id @default(uuid()) @db.Uuid
+  entityId   String   @db.Uuid
+  actorId    String   @db.Uuid
+  sensorId   String   @db.Uuid
+  locationId String?  @db.Uuid
+  mediaUrl   String
+  telemetry  Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  deletedAt  DateTime?
+
+  entity   Entity   @relation(fields: [entityId], references: [id])
+  actor    Actor    @relation(fields: [actorId], references: [id])
+  sensor   Sensor   @relation(fields: [sensorId], references: [id])
+  location Location? @relation(fields: [locationId], references: [id])
+
+  lensRuns  LensRun[]
+  changeSets ChangeSet[]
+}
+
+model Lens {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  type      String   // INVENTORY_LENS | MEAL_PLAN_LENS
+  config    Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  lensRuns LensRun[]
+}
+
+model LensRun {
+  id           String   @id @default(uuid()) @db.Uuid
+  trackId      String   @db.Uuid
+  lensId       String   @db.Uuid
+  analystType  String   // AI | MANUAL
+  status       String   // PENDING | RUNNING | COMPLETED | FAILED
+  rawOutput    Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  track Track @relation(fields: [trackId], references: [id])
+  lens  Lens  @relation(fields: [lensId], references: [id])
+}
+
+model ChangeSet {
+  id          String   @id @default(uuid()) @db.Uuid
+  entityId    String   @db.Uuid
+  taskId      String?  @db.Uuid
+  trackId     String?  @db.Uuid
+  subjectType String   // TRACK | GOAL | OTHER
+  subjectId   String   @db.Uuid
+  type        String   // INVENTORY_DIFF | WEEKLY_MEAL_PLAN
+  payload     Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  entity Entity @relation(fields: [entityId], references: [id])
+  task   Task?  @relation(fields: [taskId], references: [id])
+  track  Track? @relation(fields: [trackId], references: [id])
+
+  questions Question[]
+}
+
+model Question {
+  id           String   @id @default(uuid()) @db.Uuid
+  entityId     String   @db.Uuid
+  taskId       String?  @db.Uuid
+  goalId       String?  @db.Uuid
+  changeSetId  String?  @db.Uuid
+  subjectType  String   // CHANGESET | GOAL
+  subjectId    String   @db.Uuid
+  questionType String   // BOOLEAN | ENUM | MULTI_SELECT | NUMBER
+  config       Json?
+  batchId      String?
+  prompt       String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  entity    Entity    @relation(fields: [entityId], references: [id])
+  task      Task?     @relation(fields: [taskId], references: [id])
+  goal      Goal?     @relation(fields: [goalId], references: [id])
+  changeSet ChangeSet? @relation(fields: [changeSetId], references: [id])
+
+  answers Answer[]
+}
+
+model Answer {
+  id         String   @id @default(uuid()) @db.Uuid
+  questionId String   @db.Uuid
+  taskId     String   @db.Uuid
+  value      Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  question Question @relation(fields: [questionId], references: [id])
+  task     Task     @relation(fields: [taskId], references: [id])
+}
+
+model Planning {
+  id        String   @id @default(uuid()) @db.Uuid
+  entityId  String   @db.Uuid
+  goalId    String?  @db.Uuid
+  taskId    String   @db.Uuid
+  config    Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entity Entity @relation(fields: [entityId], references: [id])
+  goal   Goal?  @relation(fields: [goalId], references: [id])
+  task   Task   @relation(fields: [taskId], references: [id])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  entityId    String   @db.Uuid
+  actorId     String?  @db.Uuid
+  subjectType String
+  subjectId   String   @db.Uuid
+  action      String
+  payload     Json?
+  createdAt   DateTime @default(now())
+
+  entity Entity @relation(fields: [entityId], references: [id])
+  actor  Actor? @relation(fields: [actorId], references: [id])
+}

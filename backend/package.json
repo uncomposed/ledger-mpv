@@ -1,0 +1,16 @@
+{
+  "name": "ledger-mpv-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "echo \"Add eslint once API is scaffolded\"",
+    "test": "echo \"Add tests once API is scaffolded\""
+  },
+  "devDependencies": {
+    "prisma": "^5.20.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.20.0"
+  }
+}
