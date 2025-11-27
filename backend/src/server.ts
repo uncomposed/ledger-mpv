@@ -2,22 +2,15 @@ import cors from "cors";
 import express, { Request, Response } from "express";
 import morgan from "morgan";
 import { z } from "zod";
-import { env } from "./env.js";
+import { clerkEnabled, env } from "./env.js";
 import { prisma } from "./prisma.js";
-
-type RequestWithContext = Request & { actorId?: string; entityId?: string };
+import { attachAuth, RequestWithContext } from "./auth.js";
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 app.use(morgan("dev"));
-
-app.use((req, _res, next) => {
-  const ctx = req as RequestWithContext;
-  ctx.actorId = req.header("x-actor-id") ?? undefined;
-  ctx.entityId = req.header("x-entity-id") ?? undefined;
-  next();
-});
+attachAuth(app);
 
 const defaultLensTypes = [
   { type: "INVENTORY_LENS", name: "Inventory Lens" },

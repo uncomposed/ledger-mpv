@@ -9,6 +9,12 @@ This folder holds the Node/TypeScript + Prisma backend for the weekly meal-plann
 4. Create the schema: `npm run prisma:migrate` (first run will create the initial migration) then `npm run prisma:generate`.
 5. Start the API: `npm run dev` (or `npm run start` after `npm run build`).
 
+## Auth (Clerk) – optional
+- Add to `.env`: `CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_TEMPLATE` (template name from Clerk dashboard).
+- Install the dependency: `npm install @clerk/express`.
+- The server will use Clerk automatically when `CLERK_SECRET_KEY` is present; otherwise it falls back to header-based dev auth (`x-actor-id`, `x-entity-id`).
+- On first authenticated request, the server upserts an `Actor` from the Clerk user (email + name).
+
 ## Services to implement
 - **Auth**: Clerk (code-first config) or equivalent JWT middleware; issue entity-scoped session context.
 - **Entities & membership**: CRUD with role enforcement.
