@@ -1,5 +1,5 @@
 import cors from "cors";
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import morgan from "morgan";
 import { z } from "zod";
 import { clerkEnabled, env } from "./env.js";
@@ -12,10 +12,49 @@ app.use(express.json({ limit: "2mb" }));
 app.use(morgan("dev"));
 attachAuth(app);
 
+async function logAudit(params: {
+  entityId: string;
+  actorId?: string;
+  subjectType: string;
+  subjectId: string;
+  action: string;
+  payload?: any;
+}) {
+  try {
+    await prisma.auditLog.create({
+      data: {
+        entityId: params.entityId,
+        actorId: params.actorId,
+        subjectType: params.subjectType,
+        subjectId: params.subjectId,
+        action: params.action,
+        payload: params.payload,
+      },
+    });
+  } catch (err) {
+    console.error("Failed to write audit log", err);
+  }
+}
+
 const defaultLensTypes = [
   { type: "INVENTORY_LENS", name: "Inventory Lens" },
   { type: "MEAL_PLAN_LENS", name: "Weekly Meal Plan Lens" },
 ];
+
+function requireActor(req: RequestWithContext, res: Response, next: NextFunction) {
+  if (!req.actorId) {
+    return res.status(401).json({ error: "Unauthorized: missing actor context" });
+  }
+  next();
+}
+
+async function assertMembership(entityId: string, actorId: string | undefined, roles?: string[]) {
+  if (!actorId) return false;
+  const membership = await prisma.entityActor.findFirst({
+    where: { entityId, actorId, role: roles ? { in: roles } : undefined },
+  });
+  return Boolean(membership);
+}
 
 function weekRange(date = new Date()) {
   const d = new Date(date);
@@ -93,6 +132,10 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, uptime: process.uptime() });
 });
 
+app.get("/me", requireActor, async (req: RequestWithContext, res) => {
+  res.json({ actorId: req.actorId, entityId: req.entityId });
+});
+
 app.post("/actors", async (req, res) => {
   const schema = z.object({
     email: z.string().email(),
@@ -109,7 +152,110 @@ app.post("/actors", async (req, res) => {
   }
 });
 
-app.post("/entities", async (req, res) => {
+app.post("/tasks/:taskId/tags", requireActor, async (req, res) => {
+  const schema = z.object({
+    tags: z.array(z.string()).min(1),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+  try {
+    const task = await prisma.task.update({
+      where: { id: req.params.taskId },
+      data: { tags: parsed.data.tags },
+    });
+    await logAudit({
+      entityId: task.entityId,
+      actorId: (req as RequestWithContext).actorId,
+      subjectType: "TASK",
+      subjectId: task.id,
+      action: "UPDATE_TASK_TAGS",
+      payload: { tags: parsed.data.tags },
+    });
+    return res.json(task);
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
+app.post("/tasks/:taskId/assign", requireActor, async (req, res) => {
+  const schema = z.object({
+    actorId: z.string().uuid(),
+    role: z.enum(["RESPONSIBLE", "ACCOUNTABLE"]).default("RESPONSIBLE"),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+
+  try {
+    const task = await prisma.task.findUnique({ where: { id: req.params.taskId } });
+    if (!task) return res.status(404).json({ error: "Task not found" });
+    const allowed = await assertMembership(task.entityId, (req as RequestWithContext).actorId);
+    if (!allowed) return res.status(403).json({ error: "Forbidden" });
+
+    const assignment = await prisma.taskActor.upsert({
+      where: {
+        taskId_actorId_role: {
+          taskId: req.params.taskId,
+          actorId: parsed.data.actorId,
+          role: parsed.data.role,
+        },
+      },
+      update: {},
+      create: {
+        taskId: req.params.taskId,
+        actorId: parsed.data.actorId,
+        role: parsed.data.role,
+      },
+    });
+    await logAudit({
+      entityId: task.entityId,
+      actorId: (req as RequestWithContext).actorId,
+      subjectType: "TASK",
+      subjectId: task.id,
+      action: "ASSIGN_TASK",
+      payload: { assignment },
+    });
+    return res.json(assignment);
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
+app.post("/tasks/:taskId/unassign", requireActor, async (req, res) => {
+  const schema = z.object({
+    actorId: z.string().uuid(),
+    role: z.enum(["RESPONSIBLE", "ACCOUNTABLE"]).default("RESPONSIBLE"),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+
+  try {
+    const task = await prisma.task.findUnique({ where: { id: req.params.taskId } });
+    if (!task) return res.status(404).json({ error: "Task not found" });
+    const allowed = await assertMembership(task.entityId, (req as RequestWithContext).actorId);
+    if (!allowed) return res.status(403).json({ error: "Forbidden" });
+
+    await prisma.taskActor.deleteMany({
+      where: {
+        taskId: req.params.taskId,
+        actorId: parsed.data.actorId,
+        role: parsed.data.role,
+      },
+    });
+    await logAudit({
+      entityId: task.entityId,
+      actorId: (req as RequestWithContext).actorId,
+      subjectType: "TASK",
+      subjectId: task.id,
+      action: "UNASSIGN_TASK",
+      payload: { actorId: parsed.data.actorId, role: parsed.data.role },
+    });
+    return res.json({ ok: true });
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
+app.post("/entities", requireActor, async (req, res) => {
   const schema = z.object({
     name: z.string(),
     adminActorId: z.string().uuid().optional(),
@@ -139,7 +285,9 @@ app.post("/entities", async (req, res) => {
   }
 });
 
-app.post("/entities/:entityId/actors", async (req, res) => {
+app.post("/entities/:entityId/actors", requireActor, async (req, res) => {
+  const isAdmin = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId, ["ADMIN"]);
+  if (!isAdmin) return res.status(403).json({ error: "Forbidden" });
   const schema = z.object({
     actorId: z.string().uuid(),
     role: z.string().default("MEMBER"),
@@ -161,7 +309,9 @@ app.post("/entities/:entityId/actors", async (req, res) => {
   }
 });
 
-app.post("/entities/:entityId/locations", async (req, res) => {
+app.post("/entities/:entityId/locations", requireActor, async (req, res) => {
+  const allowed = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId, ["ADMIN"]);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
   const schema = z.object({
     name: z.string(),
     parentId: z.string().uuid().optional(),
@@ -183,7 +333,9 @@ app.post("/entities/:entityId/locations", async (req, res) => {
   }
 });
 
-app.post("/entities/:entityId/resources", async (req, res) => {
+app.post("/entities/:entityId/resources", requireActor, async (req, res) => {
+  const allowed = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId, ["ADMIN"]);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
   const schema = z.object({
     name: z.string(),
     unit: z.string().optional(),
@@ -205,7 +357,9 @@ app.post("/entities/:entityId/resources", async (req, res) => {
   }
 });
 
-app.post("/entities/:entityId/inventory", async (req, res) => {
+app.post("/entities/:entityId/inventory", requireActor, async (req, res) => {
+  const allowed = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
   const schema = z.object({
     resourceId: z.string().uuid(),
     locationId: z.string().uuid(),
@@ -231,7 +385,9 @@ app.post("/entities/:entityId/inventory", async (req, res) => {
   }
 });
 
-app.post("/entities/:entityId/goals/weekly-plan", async (req, res) => {
+app.post("/entities/:entityId/goals/weekly-plan", requireActor, async (req, res) => {
+  const allowed = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId, ["ADMIN"]);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
   const schema = z.object({
     periodStart: z.string().datetime().optional(),
     periodEnd: z.string().datetime().optional(),
@@ -303,7 +459,9 @@ app.post("/entities/:entityId/goals/weekly-plan", async (req, res) => {
   }
 });
 
-app.post("/entities/:entityId/tracks", async (req, res) => {
+app.post("/entities/:entityId/tracks", requireActor, async (req, res) => {
+  const allowed = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
   const schema = z.object({
     actorId: z.string().uuid(),
     mediaUrl: z.string(),
@@ -356,10 +514,14 @@ app.post("/entities/:entityId/tracks", async (req, res) => {
   }
 });
 
-app.get("/entities/:entityId/tasks", async (req, res) => {
+app.get("/entities/:entityId/tasks", requireActor, async (req, res) => {
+  const allowed = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
   const schema = z.object({
     type: z.string().optional(),
     actorId: z.string().uuid().optional(),
+    status: z.string().optional(),
+    tag: z.string().optional(),
   });
   const parsed = schema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
@@ -369,6 +531,8 @@ app.get("/entities/:entityId/tasks", async (req, res) => {
       where: {
         entityId: req.params.entityId,
         type: parsed.data.type,
+        status: parsed.data.status,
+        tags: parsed.data.tag ? { has: parsed.data.tag } : undefined,
         taskActors: parsed.data.actorId
           ? { some: { actorId: parsed.data.actorId, role: "RESPONSIBLE" } }
           : undefined,
@@ -387,17 +551,410 @@ app.get("/entities/:entityId/tasks", async (req, res) => {
   }
 });
 
-app.post("/tasks/:taskId/status", async (req, res) => {
+app.post("/tasks/:taskId/status", requireActor, async (req, res) => {
   const schema = z.object({
     status: z.enum(["PENDING", "IN_PROGRESS", "DONE", "BLOCKED"]),
   });
   const parsed = schema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
 
   try {
     const updated = await prisma.task.update({
       where: { id: req.params.taskId },
       data: { status: parsed.data.status },
+    });
+    await logAudit({
+      entityId: updated.entityId,
+      actorId: (req as RequestWithContext).actorId,
+      subjectType: "TASK",
+      subjectId: updated.id,
+      action: "UPDATE_TASK_STATUS",
+      payload: { status: parsed.data.status },
+    });
+    return res.json(updated);
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
+app.get("/entities/:entityId/lens-runs", requireActor, async (req, res) => {
+  const allowed = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
+  try {
+    const lensRuns = await prisma.lensRun.findMany({
+      where: { track: { entityId: req.params.entityId } },
+      include: { lens: true, track: true },
+      orderBy: [{ createdAt: "desc" }],
+    });
+    return res.json(lensRuns);
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
+app.get("/entities/:entityId/questions", requireActor, async (req, res) => {
+  const allowed = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
+  try {
+    const questions = await prisma.question.findMany({
+      where: { entityId: req.params.entityId },
+      include: { answers: true },
+      orderBy: [{ createdAt: "desc" }],
+    });
+    return res.json(questions);
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
+app.post("/entities/:entityId/questions", requireActor, async (req, res) => {
+  const allowed = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId, ["ADMIN"]);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
+  const schema = z.object({
+    taskId: z.string().uuid().optional(),
+    goalId: z.string().uuid().optional(),
+    changeSetId: z.string().uuid().optional(),
+    subjectType: z.string(),
+    subjectId: z.string().uuid(),
+    questionType: z.string(),
+    config: z.any().optional(),
+    batchId: z.string().optional(),
+    prompt: z.string(),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+  try {
+    const question = await prisma.question.create({
+      data: {
+        entityId: req.params.entityId,
+        ...parsed.data,
+      },
+    });
+    return res.json(question);
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
+async function buildInventoryDiffPayload(entityId: string) {
+  const [resource] = await prisma.resource.findMany({ where: { entityId }, take: 1 });
+  const [location] = await prisma.location.findMany({ where: { entityId }, take: 1 });
+  const items =
+    resource && location
+      ? [
+          {
+            resourceId: resource.id,
+            locationId: location.id,
+            quantity: 1,
+          },
+        ]
+      : [];
+  return { items, note: "Stub inventory diff generated by analyst" };
+}
+
+async function buildWeeklyPlanPayload(entityId: string, goalId?: string) {
+  const tasks = [
+    {
+      goalId,
+      type: "BUY_RESOURCE",
+      status: "PENDING",
+      dueAt: new Date(),
+    },
+    {
+      goalId,
+      type: "COOK_RECIPE_STEP",
+      status: "PENDING",
+      dueAt: new Date(),
+    },
+  ];
+  return { tasks, note: "Stub weekly plan generated by analyst" };
+}
+
+app.post("/lens-runs/:lensRunId/process", requireActor, async (req, res) => {
+  try {
+    const lensRun = await prisma.lensRun.findUnique({
+      where: { id: req.params.lensRunId },
+      include: { lens: true, track: true },
+    });
+    if (!lensRun) return res.status(404).json({ error: "LensRun not found" });
+    const entityId = lensRun.track.entityId;
+    const allowed = await assertMembership(entityId, (req as RequestWithContext).actorId);
+    if (!allowed) return res.status(403).json({ error: "Forbidden" });
+
+    let payload: any = {};
+    let changeSetType = "INVENTORY_DIFF";
+    if (lensRun.lens.type === "MEAL_PLAN_LENS") {
+      payload = await buildWeeklyPlanPayload(entityId);
+      changeSetType = "WEEKLY_MEAL_PLAN";
+    } else {
+      payload = await buildInventoryDiffPayload(entityId);
+      changeSetType = "INVENTORY_DIFF";
+    }
+
+    const changeSet = await prisma.changeSet.create({
+      data: {
+        entityId,
+        taskId: null,
+        trackId: lensRun.trackId,
+        subjectType: "TRACK",
+        subjectId: lensRun.trackId,
+        type: changeSetType,
+        payload,
+        status: "PENDING",
+      },
+    });
+
+    const question = await prisma.question.create({
+      data: {
+        entityId,
+        changeSetId: changeSet.id,
+        subjectType: "CHANGESET",
+        subjectId: changeSet.id,
+        questionType: "BOOLEAN",
+        prompt: changeSetType === "INVENTORY_DIFF" ? "Apply inventory updates?" : "Approve weekly meal plan?",
+        batchId: changeSet.id,
+      },
+    });
+
+    const updatedRun = await prisma.lensRun.update({
+      where: { id: lensRun.id },
+      data: {
+        status: "COMPLETED",
+        rawOutput: payload,
+      },
+    });
+
+    await logAudit({
+      entityId,
+      actorId: (req as RequestWithContext).actorId,
+      subjectType: "CHANGESET",
+      subjectId: changeSet.id,
+      action: "CREATE_CHANGESET_FROM_LENS_RUN",
+      payload,
+    });
+
+    return res.json({ lensRun: updatedRun, changeSet, question });
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
+app.post("/questions/:questionId/answer", requireActor, async (req, res) => {
+  const schema = z.object({
+    taskId: z.string().uuid(),
+    value: z.any(),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+  try {
+    const question = await prisma.question.findUnique({ where: { id: req.params.questionId } });
+    if (!question) return res.status(404).json({ error: "Question not found" });
+    const allowed = await assertMembership(question.entityId, (req as RequestWithContext).actorId);
+    if (!allowed) return res.status(403).json({ error: "Forbidden" });
+    const answer = await prisma.answer.create({
+      data: {
+        questionId: req.params.questionId,
+        taskId: parsed.data.taskId,
+        value: parsed.data.value,
+      },
+    });
+    await logAudit({
+      entityId: question.entityId,
+      actorId: (req as RequestWithContext).actorId,
+      subjectType: "QUESTION",
+      subjectId: question.id,
+      action: "ANSWER_QUESTION",
+    });
+    return res.json(answer);
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
+app.get("/entities/:entityId/changesets", requireActor, async (req, res) => {
+  const allowed = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
+  const schema = z.object({
+    type: z.string().optional(),
+    status: z.string().optional(),
+  });
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+  try {
+    const changeSets = await prisma.changeSet.findMany({
+      where: { entityId: req.params.entityId, type: parsed.data.type, status: parsed.data.status },
+      include: { questions: true, task: true, track: true },
+      orderBy: [{ createdAt: "desc" }],
+    });
+    return res.json(changeSets);
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
+app.post("/entities/:entityId/changesets", requireActor, async (req, res) => {
+  const allowed = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId, ["ADMIN"]);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
+  const schema = z.object({
+    taskId: z.string().uuid().optional(),
+    trackId: z.string().uuid().optional(),
+    subjectType: z.string(),
+    subjectId: z.string().uuid(),
+    type: z.string(),
+    payload: z.any(),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+  try {
+    const changeSet = await prisma.changeSet.create({
+      data: {
+        entityId: req.params.entityId,
+        status: "PENDING",
+        ...parsed.data,
+      },
+    });
+    await logAudit({
+      entityId: req.params.entityId,
+      actorId: (req as RequestWithContext).actorId,
+      subjectType: "CHANGESET",
+      subjectId: changeSet.id,
+      action: "CREATE_CHANGESET",
+    });
+    return res.json(changeSet);
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
+async function applyInventoryDiff(entityId: string, payload: any) {
+  const items: any[] = payload?.items ?? [];
+  const results = [];
+  for (const item of items) {
+    if (!item.resourceId || !item.locationId) continue;
+    if (item.action === "DELETE" || (typeof item.quantity === "number" && item.quantity <= 0)) {
+      await prisma.inventoryItem.deleteMany({
+        where: {
+          entityId,
+          resourceId: item.resourceId,
+          locationId: item.locationId,
+        },
+      });
+      results.push({ resourceId: item.resourceId, locationId: item.locationId, action: "deleted" });
+      continue;
+    }
+    const updated = await prisma.inventoryItem.upsert({
+      where: {
+        resourceId_entityId_locationId: {
+          resourceId: item.resourceId,
+          entityId,
+          locationId: item.locationId,
+        },
+      },
+      update: {
+        quantity: item.quantity,
+        expiresAt: item.expiresAt ? new Date(item.expiresAt) : undefined,
+      },
+      create: {
+        entityId,
+        resourceId: item.resourceId,
+        locationId: item.locationId,
+        quantity: item.quantity ?? 0,
+        expiresAt: item.expiresAt ? new Date(item.expiresAt) : undefined,
+      },
+    });
+    results.push(updated);
+  }
+  return results;
+}
+
+async function applyWeeklyPlan(entityId: string, payload: any) {
+  const tasks: any[] = payload?.tasks ?? [];
+  const createdTasks = [];
+  for (const t of tasks) {
+    const created = await prisma.task.create({
+      data: {
+        entityId,
+        goalId: t.goalId,
+        solutionId: t.solutionId,
+        stepId: t.stepId,
+        type: t.type ?? "BUY_RESOURCE",
+        status: t.status ?? "PENDING",
+        dueAt: t.dueAt ? new Date(t.dueAt) : undefined,
+        startsAt: t.startsAt ? new Date(t.startsAt) : undefined,
+      },
+    });
+    createdTasks.push(created);
+  }
+  return createdTasks;
+}
+
+app.post("/changesets/:changeSetId/apply", requireActor, async (req, res) => {
+  try {
+    const changeSet = await prisma.changeSet.findUnique({ where: { id: req.params.changeSetId } });
+    if (!changeSet) return res.status(404).json({ error: "ChangeSet not found" });
+    const allowed = await assertMembership(changeSet.entityId, (req as RequestWithContext).actorId, ["ADMIN"]);
+    if (!allowed) return res.status(403).json({ error: "Forbidden" });
+    if (changeSet.status !== "APPROVED") {
+      return res.status(409).json({ error: "ChangeSet must be APPROVED before apply" });
+    }
+
+    let result: any = {};
+    if (changeSet.type === "INVENTORY_DIFF") {
+      result = { inventory: await applyInventoryDiff(changeSet.entityId, changeSet.payload) };
+    } else if (changeSet.type === "WEEKLY_MEAL_PLAN") {
+      result = { tasks: await applyWeeklyPlan(changeSet.entityId, changeSet.payload) };
+    } else {
+      result = { message: "No apply handler for this change set type" };
+    }
+
+    await prisma.task.create({
+      data: {
+        entityId: changeSet.entityId,
+        type: "APPLY_CHANGESET",
+        status: "DONE",
+        changeSets: { connect: { id: changeSet.id } },
+      },
+    });
+
+    const updated = await prisma.changeSet.update({
+      where: { id: changeSet.id },
+      data: { status: "APPLIED", appliedAt: new Date() },
+    });
+
+    await logAudit({
+      entityId: changeSet.entityId,
+      actorId: (req as RequestWithContext).actorId,
+      subjectType: "CHANGESET",
+      subjectId: changeSet.id,
+      action: "APPLY_CHANGESET",
+      payload: { result },
+    });
+
+    return res.json({ changeSetId: changeSet.id, applied: true, result, changeSet: updated });
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
+app.post("/changesets/:changeSetId/approve", requireActor, async (req, res) => {
+  try {
+    const changeSet = await prisma.changeSet.findUnique({ where: { id: req.params.changeSetId } });
+    if (!changeSet) return res.status(404).json({ error: "ChangeSet not found" });
+    const allowed = await assertMembership(changeSet.entityId, (req as RequestWithContext).actorId, ["ADMIN"]);
+    if (!allowed) return res.status(403).json({ error: "Forbidden" });
+    if (changeSet.status === "APPLIED") {
+      return res.status(409).json({ error: "Already applied" });
+    }
+    const updated = await prisma.changeSet.update({
+      where: { id: changeSet.id },
+      data: { status: "APPROVED", approvedAt: new Date() },
+    });
+    await logAudit({
+      entityId: changeSet.entityId,
+      actorId: (req as RequestWithContext).actorId,
+      subjectType: "CHANGESET",
+      subjectId: changeSet.id,
+      action: "APPROVE_CHANGESET",
     });
     return res.json(updated);
   } catch (error) {
@@ -530,7 +1087,9 @@ app.post("/seed/demo", async (_req, res) => {
   }
 });
 
-app.get("/entities/:entityId/summary", async (req, res) => {
+app.get("/entities/:entityId/summary", requireActor, async (req, res) => {
+  const allowed = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
   try {
     const [tasks, inventory, goals] = await Promise.all([
       prisma.task.findMany({

@@ -34,6 +34,7 @@ Use BullMQ or cron-triggered workers for:
 
 ## Available routes in this MVP stub
 - `GET /health` — service heartbeat.
+- `GET /me` — returns `actorId`/`entityId` from auth context (requires auth).
 - `POST /actors` — create an actor `{ email, name? }`.
 - `POST /entities` — create an entity `{ name, adminActorId? }`; seeds base locations/sensors.
 - `POST /entities/:entityId/actors` — add membership `{ actorId, role }`.
@@ -42,7 +43,20 @@ Use BullMQ or cron-triggered workers for:
 - `POST /entities/:entityId/goals/weekly-plan` — create or reuse a weekly plan goal + planning task.
 - `POST /entities/:entityId/tracks` — create a track + pending lens run (defaults to inventory lens).
 - `GET /entities/:entityId/tasks?actorId=&type=` — list tasks with optional filters.
+- Filters now include `status` and `tag`.
 - `POST /tasks/:taskId/status` — update task status.
+- `POST /tasks/:taskId/tags` — replace tags array on a task.
+- `POST /tasks/:taskId/assign` — assign an actor with role `{RESPONSIBLE|ACCOUNTABLE}`.
+- `POST /tasks/:taskId/unassign` — remove an actor assignment.
+- `GET /entities/:entityId/lens-runs` — list lens runs for an entity.
+- `POST /lens-runs/:lensRunId/process` — stub analyst processor: turns a LensRun into a ChangeSet + Question and marks the run completed.
+- `GET /entities/:entityId/questions` — list questions (requires membership).
+- `POST /entities/:entityId/questions` — create a question (admins).
+- `POST /questions/:questionId/answer` — answer a question `{ taskId, value }`.
+- `GET /entities/:entityId/changesets` — list change sets.
+- `POST /entities/:entityId/changesets` — create a change set (admins) (status defaults to `PENDING`).
+- `POST /changesets/:changeSetId/approve` — mark change set `APPROVED` (admins).
+- `POST /changesets/:changeSetId/apply` — apply a change set (admins; requires status `APPROVED`). Supports `INVENTORY_DIFF` (payload `items[]`) and `WEEKLY_MEAL_PLAN` (payload `tasks[]`).
 - `POST /seed/demo` — seed a demo household, admin actor, inventory, and weekly planning task.
 - `GET /entities/:entityId/summary` — lightweight snapshot of tasks, inventory, and goals.
 

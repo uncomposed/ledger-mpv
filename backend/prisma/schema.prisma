@@ -181,6 +181,7 @@ model Task {
   locationId  String?   @db.Uuid
   type        String    // INVENTORY_REVIEW | BUY_RESOURCE | COOK_RECIPE_STEP | PLAN_WEEKLY_MEALS | APPLY_CHANGESET
   status      String    // PENDING | IN_PROGRESS | DONE | BLOCKED
+  tags        String[]  @default([])
   dueAt       DateTime?
   startsAt    DateTime?
   createdAt   DateTime  @default(now())
@@ -200,6 +201,7 @@ model Task {
   plannings  Planning[]
 
   @@unique([stepId])
+  @@index([entityId, status, type, dueAt])
 }
 
 model TaskActor {
@@ -285,6 +287,9 @@ model ChangeSet {
   subjectId   String   @db.Uuid
   type        String   // INVENTORY_DIFF | WEEKLY_MEAL_PLAN
   payload     Json
+  status      String   @default("PENDING") // PENDING | APPROVED | APPLIED
+  approvedAt  DateTime?
+  appliedAt   DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   deletedAt   DateTime?
