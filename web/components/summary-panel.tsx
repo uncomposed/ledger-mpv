@@ -13,7 +13,7 @@ export function SummaryPanel({
 }: {
   summary: Summary;
   loading: boolean;
-  onCreateToBuy: (inventoryItemId: string) => Promise<void>;
+  onCreateToBuy: (inventoryItemId: string, quantity: number) => Promise<void>;
 }) {
   return (
     <div className="card">

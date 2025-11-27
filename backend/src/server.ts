@@ -166,33 +166,49 @@ app.post("/inventory/:inventoryItemId/to-buy", requireActor, async (req, res) =>
 
     const qty = parsed.data.quantity ?? 1;
 
-    const task = await prisma.task.create({
+    const changeSet = await prisma.changeSet.create({
       data: {
         entityId: item.entityId,
-        type: "BUY_RESOURCE",
+        subjectType: "INVENTORY",
+        subjectId: item.id,
+        type: "INVENTORY_DIFF",
         status: "PENDING",
-        locationId: item.locationId,
-        title: item.resource ? `Buy ${item.resource.name}` : "Buy resource",
-        metadata: {
-          inventoryItemId: item.id,
-          resourceId: item.resourceId,
-          locationId: item.locationId,
-          quantity: qty,
+        payload: {
+          items: [
+            {
+              inventoryItemId: item.id,
+              resourceId: item.resourceId,
+              locationId: item.locationId,
+              quantity: qty,
+              action: "TO_BUY",
+            },
+          ],
         },
-        tags: ["to-buy"],
+      },
+    });
+
+    const question = await prisma.question.create({
+      data: {
+        entityId: item.entityId,
+        changeSetId: changeSet.id,
+        subjectType: "CHANGESET",
+        subjectId: changeSet.id,
+        questionType: "BOOLEAN",
+        prompt: item.resource ? `Create to-buy task for ${qty} x ${item.resource.name}?` : "Create to-buy task?",
+        batchId: changeSet.id,
       },
     });
 
     await logAudit({
       entityId: item.entityId,
       actorId: (req as RequestWithContext).actorId,
-      subjectType: "TASK",
-      subjectId: task.id,
-      action: "CREATE_TO_BUY_TASK",
-      payload: { inventoryItemId: item.id },
+      subjectType: "CHANGESET",
+      subjectId: changeSet.id,
+      action: "REQUEST_TO_BUY",
+      payload: { inventoryItemId: item.id, quantity: qty },
     });
 
-    return res.json(task);
+    return res.json({ changeSet, question });
   } catch (error) {
     return respondError(res, error);
   }
@@ -827,7 +843,7 @@ app.get("/entities/:entityId/questions", requireActor, async (req, res) => {
   try {
     const questions = await prisma.question.findMany({
       where: { entityId: req.params.entityId },
-      include: { answers: true },
+      include: { answers: true, changeSet: true },
       orderBy: [{ createdAt: "desc" }],
     });
     return res.json(questions);
@@ -1072,6 +1088,27 @@ async function applyInventoryDiff(entityId: string, payload: any) {
   const results = [];
   for (const item of items) {
     if (!item.resourceId || !item.locationId) continue;
+    if (item.action === "TO_BUY") {
+      const resource = await prisma.resource.findUnique({ where: { id: item.resourceId } });
+      const task = await prisma.task.create({
+        data: {
+          entityId,
+          type: "BUY_RESOURCE",
+          status: "PENDING",
+          locationId: item.locationId,
+          title: resource ? `Buy ${resource.name}` : "Buy resource",
+          metadata: {
+            inventoryItemId: item.inventoryItemId,
+            resourceId: item.resourceId,
+            locationId: item.locationId,
+            quantity: item.quantity ?? 1,
+          },
+          tags: ["to-buy"],
+        },
+      });
+      results.push({ taskId: task.id, action: "to-buy" });
+      continue;
+    }
     if (item.action === "DELETE" || (typeof item.quantity === "number" && item.quantity <= 0)) {
       await prisma.inventoryItem.deleteMany({
         where: {

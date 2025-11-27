@@ -140,6 +140,21 @@ export default function Home() {
       />
 
       <QueuePanel questions={questions} />
+      <QueuePanel
+        questions={questions}
+        apiBase={apiBase}
+        getToken={getToken}
+        refresh={async () => {
+          const token = await getToken();
+          const headers = { Authorization: `Bearer ${token}` };
+          const [summaryRes, questionsRes] = await Promise.all([
+            fetchWithAuth(`${apiBase}/entities/${entityId}/summary`, headers),
+            fetchWithAuth(`${apiBase}/entities/${entityId}/questions`, headers),
+          ]);
+          setSummary(summaryRes ?? { tasks: [], inventory: [], goals: [] });
+          setQuestions(questionsRes ?? []);
+        }}
+      />
 
       <CapturePanel
         entityId={entityId}

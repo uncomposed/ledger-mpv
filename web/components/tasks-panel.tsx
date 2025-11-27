@@ -7,9 +7,12 @@ import { TaskAssign } from "./task-assign";
 type Task = {
   id: string;
   type: string;
+  title?: string | null;
   status: string;
   tags?: string[];
   dueAt?: string;
+  metadata?: any;
+  taskActors?: { actorId: string; role: string }[];
 };
 
 export function TasksPanel({
@@ -123,12 +126,21 @@ export function TasksPanel({
               <input type="checkbox" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} />
               My tasks only
             </label>
+            <label className="hint" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <input
+                type="checkbox"
+                checked={tagFilter === "to-buy"}
+                onChange={(e) => setTagFilter(e.target.checked ? "to-buy" : "")}
+              />
+              To buy
+            </label>
           </div>
           <ul className="list">
             {filtered.map((t) => (
               <li key={t.id} className="list-item">
                 <div>
-                  <strong>{t.type}</strong> — {t.status}
+                  <strong>{t.title || t.type}</strong> — {t.status}
+                  {t.metadata?.quantity && <span className="pill">Qty {t.metadata.quantity}</span>}
                   {t.tags && t.tags.length > 0 && <span className="pill">Tags: {t.tags.join(", ")}</span>}
                   {t.dueAt && <span className="pill">Due {new Date(t.dueAt).toLocaleDateString()}</span>}
                 </div>
