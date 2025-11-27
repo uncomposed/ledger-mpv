@@ -110,7 +110,20 @@ export default function Home() {
 
       <AIKeyPanel />
 
-      <SummaryPanel summary={summary} loading={loading} />
+      <SummaryPanel
+        summary={summary}
+        loading={loading}
+        onCreateToBuy={async (inventoryItemId: string, quantity: number) => {
+          const token = await getToken();
+          const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+          await fetchWithAuth(`${apiBase}/inventory/${inventoryItemId}/to-buy`, headers, {
+            method: "POST",
+            body: JSON.stringify({ quantity }),
+          });
+          const nextSummary = await fetchWithAuth(`${apiBase}/entities/${entityId}/summary`, headers);
+          setSummary(nextSummary ?? { tasks: [], inventory: [], goals: [] });
+        }}
+      />
 
       <TasksPanel
         entityId={entityId}

@@ -181,6 +181,8 @@ model Task {
   locationId  String?   @db.Uuid
   type        String    // INVENTORY_REVIEW | BUY_RESOURCE | COOK_RECIPE_STEP | PLAN_WEEKLY_MEALS | APPLY_CHANGESET
   status      String    // PENDING | IN_PROGRESS | DONE | BLOCKED
+  title       String?
+  metadata    Json?
   tags        String[]  @default([])
   dueAt       DateTime?
   startsAt    DateTime?

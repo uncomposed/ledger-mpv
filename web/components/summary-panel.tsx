@@ -6,7 +6,15 @@ type Summary = {
   goals: any[];
 };
 
-export function SummaryPanel({ summary, loading }: { summary: Summary; loading: boolean }) {
+export function SummaryPanel({
+  summary,
+  loading,
+  onCreateToBuy,
+}: {
+  summary: Summary;
+  loading: boolean;
+  onCreateToBuy: (inventoryItemId: string) => Promise<void>;
+}) {
   return (
     <div className="card">
       <h2>Summary</h2>
@@ -18,6 +26,18 @@ export function SummaryPanel({ summary, loading }: { summary: Summary; loading: 
             {summary.inventory?.map((item: any) => (
               <li key={item.id} className="list-item">
                 {item.resource?.name ?? "Item"} — qty {item.quantity} ({item.location?.name ?? "Unknown"})
+                <div className="actions">
+                  <button
+                    onClick={() => {
+                      const qtyInput = window.prompt("Quantity to buy?", "1");
+                      const qty = qtyInput ? parseFloat(qtyInput) : 1;
+                      if (Number.isNaN(qty)) return;
+                      onCreateToBuy(item.id, qty);
+                    }}
+                  >
+                    Add To-Buy Task
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

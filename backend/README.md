@@ -50,6 +50,7 @@ Use BullMQ or cron-triggered workers for:
 - `POST /tasks/:taskId/assign` — assign an actor with role `{RESPONSIBLE|ACCOUNTABLE}`.
 - `POST /tasks/:taskId/unassign` — remove an actor assignment.
 - `POST /entities/:entityId/tasks` — create an ad-hoc task (membership required).
+- `POST /inventory/:inventoryItemId/to-buy` — create a `BUY_RESOURCE` task for that item (supports `quantity`; auto-adds item on completion).
 - `GET /entities/:entityId/lens-runs` — list lens runs for an entity.
 - `POST /lens-runs/:lensRunId/process` — stub analyst processor: turns a LensRun into a ChangeSet + Question and marks the run completed.
 - `GET /entities/:entityId/questions` — list questions (requires membership).

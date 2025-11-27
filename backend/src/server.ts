@@ -149,6 +149,55 @@ app.get("/me/entities", requireActor, async (req: RequestWithContext, res) => {
   }
 });
 
+app.post("/inventory/:inventoryItemId/to-buy", requireActor, async (req, res) => {
+  const schema = z.object({
+    quantity: z.number().optional(),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+  try {
+    const item = await prisma.inventoryItem.findUnique({
+      where: { id: req.params.inventoryItemId },
+      include: { resource: true, location: true },
+    });
+    if (!item) return res.status(404).json({ error: "Inventory item not found" });
+    const allowed = await assertMembership(item.entityId, (req as RequestWithContext).actorId);
+    if (!allowed) return res.status(403).json({ error: "Forbidden" });
+
+    const qty = parsed.data.quantity ?? 1;
+
+    const task = await prisma.task.create({
+      data: {
+        entityId: item.entityId,
+        type: "BUY_RESOURCE",
+        status: "PENDING",
+        locationId: item.locationId,
+        title: item.resource ? `Buy ${item.resource.name}` : "Buy resource",
+        metadata: {
+          inventoryItemId: item.id,
+          resourceId: item.resourceId,
+          locationId: item.locationId,
+          quantity: qty,
+        },
+        tags: ["to-buy"],
+      },
+    });
+
+    await logAudit({
+      entityId: item.entityId,
+      actorId: (req as RequestWithContext).actorId,
+      subjectType: "TASK",
+      subjectId: task.id,
+      action: "CREATE_TO_BUY_TASK",
+      payload: { inventoryItemId: item.id },
+    });
+
+    return res.json(task);
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
 app.post("/actors", async (req, res) => {
   const schema = z.object({
     email: z.string().email(),
@@ -281,6 +330,9 @@ app.post("/entities/:entityId/tasks", requireActor, async (req, res) => {
     dueAt: z.string().datetime().optional(),
     startsAt: z.string().datetime().optional(),
     tags: z.array(z.string()).optional(),
+    title: z.string().optional(),
+    metadata: z.any().optional(),
+    assignToActor: z.boolean().optional(),
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
@@ -294,6 +346,23 @@ app.post("/entities/:entityId/tasks", requireActor, async (req, res) => {
         startsAt: parsed.data.startsAt ? new Date(parsed.data.startsAt) : undefined,
       },
     });
+    if (parsed.data.assignToActor) {
+      await prisma.taskActor.upsert({
+        where: {
+          taskId_actorId_role: {
+            taskId: task.id,
+            actorId: (req as RequestWithContext).actorId!,
+            role: "RESPONSIBLE",
+          },
+        },
+        update: {},
+        create: {
+          taskId: task.id,
+          actorId: (req as RequestWithContext).actorId!,
+          role: "RESPONSIBLE",
+        },
+      });
+    }
     await logAudit({
       entityId: task.entityId,
       actorId: (req as RequestWithContext).actorId,
@@ -685,13 +754,44 @@ app.post("/tasks/:taskId/status", requireActor, async (req, res) => {
     status: z.enum(["PENDING", "IN_PROGRESS", "DONE", "BLOCKED"]),
   });
   const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
 
   try {
+    const existing = await prisma.task.findUnique({ where: { id: req.params.taskId } });
+    if (!existing) return res.status(404).json({ error: "Task not found" });
+
     const updated = await prisma.task.update({
       where: { id: req.params.taskId },
       data: { status: parsed.data.status },
     });
+
+    // If marking a BUY_RESOURCE task as DONE for the first time, increment inventory
+    if (
+      existing.type === "BUY_RESOURCE" &&
+      existing.status !== "DONE" &&
+      parsed.data.status === "DONE" &&
+      existing.metadata &&
+      typeof existing.metadata === "object" &&
+      "inventoryItemId" in (existing.metadata as any)
+    ) {
+      const meta: any = existing.metadata;
+      const qty = typeof meta.quantity === "number" ? meta.quantity : 1;
+      if (meta.inventoryItemId) {
+        await prisma.inventoryItem.upsert({
+          where: { id: meta.inventoryItemId },
+          update: {
+            quantity: { increment: qty },
+          },
+          create: {
+            id: meta.inventoryItemId,
+            entityId: existing.entityId,
+            resourceId: meta.resourceId ?? undefined,
+            locationId: meta.locationId ?? undefined,
+            quantity: qty,
+          },
+        });
+      }
+    }
     await logAudit({
       entityId: updated.entityId,
       actorId: (req as RequestWithContext).actorId,

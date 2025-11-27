@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { fetchWithAuth } from "../lib/api";
+import { TaskAssign } from "./task-assign";
 
 type Task = {
   id: string;
@@ -23,6 +24,7 @@ export function TasksPanel({
   apiBase: string;
   getToken: () => Promise<string | null>;
   tasks: Task[];
+  actorId: string;
   actorId: string;
   refreshSummary: () => Promise<void>;
 }) {
@@ -67,6 +69,7 @@ export function TasksPanel({
         body: JSON.stringify({
           type: newTaskType,
           tags: newTaskTag ? [newTaskTag] : [],
+          assignToActor: true,
         }),
       },
     );
@@ -143,6 +146,16 @@ export function TasksPanel({
                     Blocked
                   </button>
                 </div>
+                {actorId && (
+                  <TaskAssign
+                    taskId={t.id}
+                    entityId={entityId}
+                    apiBase={apiBase}
+                    getToken={getToken}
+                    actorId={actorId}
+                    onChange={refreshSummary}
+                  />
+                )}
               </li>
             ))}
           </ul>
