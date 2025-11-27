@@ -7,6 +7,7 @@ import { AIKeyPanel } from "../components/ai-key-panel";
 import { TasksPanel } from "../components/tasks-panel";
 import { QueuePanel } from "../components/queue-panel";
 import { SummaryPanel } from "../components/summary-panel";
+import { CapturePanel } from "../components/capture-panel";
 
 type Summary = {
   tasks: any[];
@@ -21,6 +22,7 @@ export default function Home() {
   const [questions, setQuestions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [joinMessage, setJoinMessage] = useState<string>("");
+  const [actorId, setActorId] = useState<string>("");
 
   const apiBase = useMemo(() => process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000", []);
 
@@ -29,6 +31,13 @@ export default function Home() {
     // For MVP, let user paste entityId once; could be improved with list endpoint
     const storedEntity = window.localStorage.getItem("entityId");
     if (storedEntity) setEntityId(storedEntity);
+    const loadActor = async () => {
+      const token = await getToken();
+      const headers = { Authorization: `Bearer ${token}` };
+      const me = await fetchWithAuth(`${apiBase}/me`, headers);
+      if (me?.actorId) setActorId(me.actorId);
+    };
+    loadActor();
   }, [isSignedIn]);
 
   useEffect(() => {
@@ -108,6 +117,7 @@ export default function Home() {
         apiBase={apiBase}
         getToken={getToken}
         tasks={summary.tasks}
+        actorId={actorId}
         refreshSummary={async () => {
           const token = await getToken();
           const headers = { Authorization: `Bearer ${token}` };
@@ -117,6 +127,22 @@ export default function Home() {
       />
 
       <QueuePanel questions={questions} />
+
+      <CapturePanel
+        entityId={entityId}
+        apiBase={apiBase}
+        getToken={getToken}
+        onCreated={async () => {
+          const token = await getToken();
+          const headers = { Authorization: `Bearer ${token}` };
+          const [summaryRes, questionsRes] = await Promise.all([
+            fetchWithAuth(`${apiBase}/entities/${entityId}/summary`, headers),
+            fetchWithAuth(`${apiBase}/entities/${entityId}/questions`, headers),
+          ]);
+          setSummary(summaryRes ?? { tasks: [], inventory: [], goals: [] });
+          setQuestions(questionsRes ?? []);
+        }}
+      />
     </div>
   );
 }

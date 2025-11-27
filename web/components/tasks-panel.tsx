@@ -16,24 +16,30 @@ export function TasksPanel({
   apiBase,
   getToken,
   tasks,
+  actorId,
   refreshSummary,
 }: {
   entityId: string;
   apiBase: string;
   getToken: () => Promise<string | null>;
   tasks: Task[];
+  actorId: string;
   refreshSummary: () => Promise<void>;
 }) {
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [tagFilter, setTagFilter] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [mineOnly, setMineOnly] = useState(false);
   const [newTaskType, setNewTaskType] = useState("CUSTOM_TASK");
   const [newTaskTag, setNewTaskTag] = useState("");
   const filtered = useMemo(() => {
     return tasks.filter((t) => {
-      return (!statusFilter || t.status === statusFilter) && (!tagFilter || (t.tags ?? []).includes(tagFilter));
+      const hasTag = !tagFilter || (t.tags ?? []).includes(tagFilter);
+      const hasStatus = !statusFilter || t.status === statusFilter;
+      const mine = !mineOnly || (actorId && (t as any).taskActors?.some((a: any) => a.actorId === actorId && a.role === "RESPONSIBLE"));
+      return hasTag && hasStatus && mine;
     });
-  }, [tasks, statusFilter, tagFilter]);
+  }, [tasks, statusFilter, tagFilter, mineOnly, actorId]);
 
   const updateStatus = async (taskId: string, status: string) => {
     if (!entityId) return;
@@ -70,12 +76,12 @@ export function TasksPanel({
     setNewTaskTag("");
   };
 
-  return (
-    <div className="card">
-      <h2>Tasks</h2>
-      {!entityId && <p className="hint">Set an Entity ID to view tasks.</p>}
-      {entityId && (
-        <>
+    return (
+      <div className="card">
+        <h2>Tasks</h2>
+        {!entityId && <p className="hint">Set an Entity ID to view tasks.</p>}
+        {entityId && (
+          <>
           <div className="card" style={{ marginBottom: 8 }}>
             <div className="hint">Quick create task</div>
             <div className="filters">
@@ -110,6 +116,10 @@ export function TasksPanel({
               onChange={(e) => setTagFilter(e.target.value)}
               placeholder="Filter by tag"
             />
+            <label className="hint" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <input type="checkbox" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} />
+              My tasks only
+            </label>
           </div>
           <ul className="list">
             {filtered.map((t) => (
