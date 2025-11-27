@@ -27,6 +27,8 @@ export function TasksPanel({
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [tagFilter, setTagFilter] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [newTaskType, setNewTaskType] = useState("CUSTOM_TASK");
+  const [newTaskTag, setNewTaskTag] = useState("");
   const filtered = useMemo(() => {
     return tasks.filter((t) => {
       return (!statusFilter || t.status === statusFilter) && (!tagFilter || (t.tags ?? []).includes(tagFilter));
@@ -46,12 +48,54 @@ export function TasksPanel({
     setLoading(false);
   };
 
+  const createTask = async () => {
+    if (!entityId || !newTaskType) return;
+    setLoading(true);
+    const token = await getToken();
+    await fetchWithAuth(
+      `${apiBase}/entities/${entityId}/tasks`,
+      { Authorization: `Bearer ${token}` },
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: newTaskType,
+          tags: newTaskTag ? [newTaskTag] : [],
+        }),
+      },
+    );
+    await refreshSummary();
+    setLoading(false);
+    setNewTaskType("CUSTOM_TASK");
+    setNewTaskTag("");
+  };
+
   return (
     <div className="card">
       <h2>Tasks</h2>
       {!entityId && <p className="hint">Set an Entity ID to view tasks.</p>}
       {entityId && (
         <>
+          <div className="card" style={{ marginBottom: 8 }}>
+            <div className="hint">Quick create task</div>
+            <div className="filters">
+              <input
+                className="input"
+                value={newTaskType}
+                onChange={(e) => setNewTaskType(e.target.value)}
+                placeholder="Task type (e.g., BUY_RESOURCE)"
+              />
+              <input
+                className="input"
+                value={newTaskTag}
+                onChange={(e) => setNewTaskTag(e.target.value)}
+                placeholder="Tag (optional)"
+              />
+              <button onClick={createTask} disabled={loading}>
+                Create
+              </button>
+            </div>
+          </div>
           <div className="filters">
             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="">All statuses</option>

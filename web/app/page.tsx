@@ -20,6 +20,7 @@ export default function Home() {
   const [summary, setSummary] = useState<Summary>({ tasks: [], inventory: [], goals: [] });
   const [questions, setQuestions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [joinMessage, setJoinMessage] = useState<string>("");
 
   const apiBase = useMemo(() => process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000", []);
 
@@ -52,6 +53,28 @@ export default function Home() {
     load();
   }, [entityId, apiBase, getToken, isSignedIn]);
 
+  const joinEntity = async () => {
+    if (!entityId || !isSignedIn) return;
+    setJoinMessage("");
+    setLoading(true);
+    const token = await getToken();
+    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    const res = await fetchWithAuth(`${apiBase}/entities/${entityId}/join`, headers, { method: "POST" });
+    if (res) {
+      setJoinMessage(`Joined entity as ${res.role}`);
+      // reload summary and questions
+      const [summaryRes, questionsRes] = await Promise.all([
+        fetchWithAuth(`${apiBase}/entities/${entityId}/summary`, headers),
+        fetchWithAuth(`${apiBase}/entities/${entityId}/questions`, headers),
+      ]);
+      setSummary(summaryRes ?? { tasks: [], inventory: [], goals: [] });
+      setQuestions(questionsRes ?? []);
+    } else {
+      setJoinMessage("Failed to join entity");
+    }
+    setLoading(false);
+  };
+
   if (!isSignedIn) {
     return <div className="card">Sign in to view your household.</div>;
   }
@@ -70,6 +93,10 @@ export default function Home() {
           placeholder="Entity ID"
           className="input"
         />
+        <button onClick={joinEntity} disabled={!entityId || loading}>
+          Join entity
+        </button>
+        {joinMessage && <div className="hint">{joinMessage}</div>}
       </div>
 
       <AIKeyPanel />

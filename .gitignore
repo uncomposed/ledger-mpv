@@ -5,3 +5,4 @@ backend/.env
 backend/.env.local
 backend/node_modules
 backend/dist
+web/.env.local

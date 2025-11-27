@@ -255,6 +255,45 @@ app.post("/tasks/:taskId/unassign", requireActor, async (req, res) => {
   }
 });
 
+app.post("/entities/:entityId/tasks", requireActor, async (req, res) => {
+  const allowed = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
+  const schema = z.object({
+    type: z.string(),
+    status: z.enum(["PENDING", "IN_PROGRESS", "DONE", "BLOCKED"]).default("PENDING"),
+    goalId: z.string().uuid().optional(),
+    solutionId: z.string().uuid().optional(),
+    stepId: z.string().uuid().optional(),
+    locationId: z.string().uuid().optional(),
+    dueAt: z.string().datetime().optional(),
+    startsAt: z.string().datetime().optional(),
+    tags: z.array(z.string()).optional(),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+
+  try {
+    const task = await prisma.task.create({
+      data: {
+        entityId: req.params.entityId,
+        ...parsed.data,
+        dueAt: parsed.data.dueAt ? new Date(parsed.data.dueAt) : undefined,
+        startsAt: parsed.data.startsAt ? new Date(parsed.data.startsAt) : undefined,
+      },
+    });
+    await logAudit({
+      entityId: task.entityId,
+      actorId: (req as RequestWithContext).actorId,
+      subjectType: "TASK",
+      subjectId: task.id,
+      action: "CREATE_TASK",
+    });
+    return res.json(task);
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
 app.post("/entities", requireActor, async (req, res) => {
   const schema = z.object({
     name: z.string(),
@@ -286,8 +325,12 @@ app.post("/entities", requireActor, async (req, res) => {
 });
 
 app.post("/entities/:entityId/actors", requireActor, async (req, res) => {
+  const memberships = await prisma.entityActor.count({ where: { entityId: req.params.entityId } });
   const isAdmin = await assertMembership(req.params.entityId, (req as RequestWithContext).actorId, ["ADMIN"]);
-  if (!isAdmin) return res.status(403).json({ error: "Forbidden" });
+  // Bootstrap rule: if no memberships exist yet, allow the caller to add themselves as ADMIN.
+  if (!isAdmin && !(memberships === 0 && (req as RequestWithContext).actorId === req.body.actorId)) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
   const schema = z.object({
     actorId: z.string().uuid(),
     role: z.string().default("MEMBER"),
@@ -303,6 +346,36 @@ app.post("/entities/:entityId/actors", requireActor, async (req, res) => {
         role: parsed.data.role,
       },
     });
+    return res.json(membership);
+  } catch (error) {
+    return respondError(res, error);
+  }
+});
+
+app.post("/entities/:entityId/join", requireActor, async (req, res) => {
+  const actorId = (req as RequestWithContext).actorId!;
+  try {
+    const existing = await prisma.entityActor.findFirst({
+      where: { entityId: req.params.entityId, actorId },
+    });
+    if (existing) return res.json(existing);
+
+    const memberships = await prisma.entityActor.count({ where: { entityId: req.params.entityId } });
+    const role = memberships === 0 ? "ADMIN" : "MEMBER";
+
+    const membership = await prisma.entityActor.create({
+      data: { entityId: req.params.entityId, actorId, role },
+    });
+
+    await logAudit({
+      entityId: req.params.entityId,
+      actorId,
+      subjectType: "ENTITY",
+      subjectId: req.params.entityId,
+      action: "JOIN_ENTITY",
+      payload: { role },
+    });
+
     return res.json(membership);
   } catch (error) {
     return respondError(res, error);
